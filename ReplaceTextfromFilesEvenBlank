@@ -1,0 +1,58 @@
+-- Replace text in plain and rich text documents
+-- NOTE: This script can't replace text having mixed styles and is by default case-sensitive (see 'considering case')
+-- WARNING: This can't be undone!
+-- Created by Christian Grunenberg Thu Jul 27 2021.
+-- Copyright (c) 2021. All rights reserved.
+-- Markdown added by a Kat
+
+tell application id "DNtp"
+	try
+		set theNum to count of selected records
+		if theNum is 0 then error "Please select some documents."
+		repeat
+			set search_string to display name editor "Replace Text" info "Enter text to find:"
+			if search_string is not "" then exit repeat
+		end repeat
+		
+		-- Use standard AppleScript dialog instead of display name editor
+		set replacement_string to text returned of (display dialog "Enter replacement text:" default answer "" buttons {"Cancel", "OK"} default button "OK")
+		
+		show progress indicator "Replacing Text" steps theNum
+		considering case -- Alternative: ignoring case
+			repeat with theRecord in selected records
+				step progress indicator (name of theRecord) as string
+				if type of theRecord is rtf or type of theRecord is rtfd then
+					tell text of theRecord
+						repeat with theAttributeRun in attribute runs
+							set theString to (theAttributeRun as string)
+							if theString contains search_string then
+								set theString to my replaceText(theString, search_string, replacement_string)
+								set text of theAttributeRun to theString
+							end if
+						end repeat
+					end tell
+				else if type of theRecord is txt or type of theRecord is markdown then
+					set theString to plain text of theRecord
+					if theString contains search_string then
+						set theString to my replaceText(theString, search_string, replacement_string)
+						set plain text of theRecord to theString
+					end if
+				end if
+			end repeat
+		end considering
+		hide progress indicator
+	on error error_message number error_number
+		hide progress indicator
+		if the error_number is not -128 then display alert "DEVONthink" message error_message as warning
+	end try
+end tell
+
+on replaceText(theString, find, replace)
+	local od
+	set {od, text item delimiters of AppleScript} to {text item delimiters of AppleScript, find}
+	set theString to text items of theString
+	set text item delimiters of AppleScript to replace
+	set theString to "" & theString
+	set text item delimiters of AppleScript to od
+	return theString
+end replaceText
