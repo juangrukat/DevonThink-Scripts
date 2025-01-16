@@ -1,0 +1,181 @@
+use AppleScript version "2.4"
+use scripting additions
+
+tell application id "DNtp"
+	try
+		-- Get the current database and selected records
+		set theDB to current database
+		if theDB is missing value then error "Please open a database first."
+		
+		set selectedRecords to selected records
+		if (count of selectedRecords) is 0 then error "Please select some documents to process."
+		
+		-- Get or create the headings group
+		set headingsGroup to get record at "/Heading Pages" in theDB
+		if headingsGroup is missing value then
+			-- Create the Heading Pages group
+			set headingsGroup to create record with {name:"Heading Pages", type:group} in theDB
+			set comment of headingsGroup to "This group contains automatically generated pages for all wikilinks found in your documents. Each page tracks which documents reference that particular heading."
+			display alert "Created Heading Pages Group" message "Created a new group to store wikilink pages."
+		end if
+		
+		-- Show progress
+		show progress indicator "Processing Records" steps (count of selectedRecords)
+		
+		-- Process each selected record
+		repeat with theRecord in selectedRecords
+			if type of theRecord is in {markdown, txt, rtf, rtfd} then
+				step progress indicator ("Processing " & (name of theRecord as string))
+				
+				-- Get content and look for wikilinks
+				set theContent to plain text of theRecord
+				
+				-- Save original delimiters
+				set savedDelimiters to AppleScript's text item delimiters
+				
+				-- Find all wikilinks in the content
+				set wikilinks to {}
+				set currentPos to 1
+				set contentLength to length of theContent
+				
+				repeat while currentPos ≤ contentLength
+					-- Find next "[[" marker
+					set startPos to offset of "[[" in (texts currentPos thru contentLength of theContent)
+					if startPos is 0 then exit repeat
+					
+					-- Adjust position to actual location
+					set startPos to currentPos + startPos + 1
+					
+					-- Find closing "]]"
+					set remainingText to texts startPos thru contentLength of theContent
+					set endPos to offset of "]]" in remainingText
+					if endPos is 0 then exit repeat
+					
+					-- Extract the wikilink text
+					set linkText to texts 1 thru (endPos - 1) of remainingText
+					
+					-- Add to wikilinks if not empty and not already found
+					if linkText is not "" and linkText is not in wikilinks then
+						set end of wikilinks to linkText
+					end if
+					
+					-- Move past this wikilink
+					set currentPos to startPos + endPos + 1
+				end repeat
+				
+				-- Process found wikilinks
+				repeat with linkText in wikilinks
+					-- Create or get wikilink page
+					set wikiPage to get record at ("/Heading Pages/" & linkText) in theDB
+					if wikiPage is missing value then
+						set wikiPage to create record with {name:linkText, type:markdown} in headingsGroup
+						set plain text of wikiPage to "# " & linkText & return & return & "## Documents referencing this heading" & return
+					end if
+					
+					-- Add reference only if it doesn't exist
+					set docURL to reference URL of theRecord
+					set docLink to "- [" & (name of theRecord as string) & "](" & docURL & ")"
+					
+					set pageContent to plain text of wikiPage
+					if pageContent does not contain docLink then
+						if last character of pageContent is not return then
+							set pageContent to pageContent & return
+						end if
+						set plain text of wikiPage to pageContent & docLink & return
+					end if
+				end repeat
+				
+				-- Restore delimiters
+				set AppleScript's text item delimiters to savedDelimiters
+			end if
+		end repeat
+		
+		-- After processing wikilinks, check all heading pages for orphaned references
+		repeat with theRecord in selectedRecords
+			if type of theRecord is in {markdown, txt, rtf, rtfd} then
+				-- Get content to check for wikilinks
+				set theContent to plain text of theRecord
+				set docURL to reference URL of theRecord
+				set docLink to "- [" & (name of theRecord as string) & "](" & docURL & ")"
+				
+				-- Get all heading pages
+				set headingRecords to children of headingsGroup
+				
+				-- Check each heading page
+				repeat with headingPage in headingRecords
+					set pageContent to plain text of headingPage
+					set headingName to name of headingPage
+					
+					-- If page contains a reference to this document
+					if pageContent contains docLink then
+						-- Check if the document still contains this wikilink
+						set hasWikilink to false
+						set linkToFind to "[[" & headingName & "]]"
+						
+						if theContent contains linkToFind then
+							set hasWikilink to true
+						end if
+						
+						-- If wikilink is gone, remove the reference
+						if not hasWikilink then
+							-- Split content into lines
+							set AppleScript's text item delimiters to return
+							set contentLines to text items of pageContent
+							
+							-- Remove the line containing the link
+							set newContent to {}
+							repeat with aLine in contentLines
+								if aLine does not contain docLink then
+									set end of newContent to aLine
+								end if
+							end repeat
+							
+							-- Join lines back together
+							set newPageContent to ""
+							repeat with aLine in newContent
+								set newPageContent to newPageContent & aLine & return
+							end repeat
+							
+							-- Update the heading page
+							set plain text of headingPage to newPageContent
+						end if
+					end if
+				end repeat
+			end if
+		end repeat
+		
+		-- NEW CODE: Check for and delete empty heading pages
+		set headingRecords to children of headingsGroup
+		repeat with headingPage in headingRecords
+			set pageContent to plain text of headingPage
+			
+			-- Split content into lines
+			set AppleScript's text item delimiters to return
+			set contentLines to text items of pageContent
+			
+			-- Count non-empty lines that aren't headers
+			set linkCount to 0
+			repeat with aLine in contentLines
+				if aLine starts with "- [" then
+					set linkCount to linkCount + 1
+				end if
+			end repeat
+			
+			-- If there are no links (only headers remain), delete the heading page
+			if linkCount is 0 then
+				delete record headingPage
+			end if
+		end repeat
+		
+		hide progress indicator
+		display alert "Complete" message "Finished processing selected documents and cleaning empty headings."
+		
+	on error error_message number error_number
+		-- Restore delimiters in case of error
+		set AppleScript's text item delimiters to savedDelimiters
+		hide progress indicator
+		if error_number is not -128 then
+			display alert "Error" message error_message
+		end if
+	end try
+end tell
