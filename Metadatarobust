@@ -1,86 +1,198 @@
+use AppleScript version "2.4" -- Yosemite (10.10) or later
+use scripting additions
+
 tell application id "DNtp"
-	repeat with theRecord in (selected records whose (type is markdown))
-		-- First clear all existing custom metadata
-		set custom meta data of theRecord to {}
-		-- Clear existing tags
-		set tags of theRecord to {}
-		
-		set src to plain text of theRecord
-		set mdMarker to false
-		set od to AppleScript's text item delimiters
-		set foundTitle to "" -- Variable to hold the title for renaming
-		set paraCount to count paragraphs of src
-		set i to 1
-		
-		repeat until i > paraCount
-			set theParagraph to paragraph i of src
-			if (theParagraph is "---") and (not mdMarker) then
-				set mdMarker to true
-			else if (theParagraph is "---") and mdMarker then
-				exit repeat
-			else if mdMarker then
-				if theParagraph contains ":" then
+	-- First get the selected records safely
+	set selectedRecords to selected records whose (type is markdown)
+	if selectedRecords is {} then
+		log "No markdown files selected"
+		return
+	end if
+	
+	set processedCount to 0
+	set errorCount to 0
+	set totalFiles to count selectedRecords
+	
+	log "Starting to process " & totalFiles & " markdown files"
+	
+	try
+		repeat with theRecord in selectedRecords
+			try
+				-- Store the current name for logging
+				set originalName to name of theRecord
+				
+				-- Verify record is valid before processing
+				if originalName is missing value then
+					log "Warning: Found invalid record, skipping"
+					set errorCount to errorCount + 1
+					set processedCount to processedCount + 1
+					delay 0.2
+				else
+					set foundTitle to ""
+					
+					log "Processing file " & (processedCount + 1) & " of " & totalFiles & ": " & originalName
+					
+					-- First clear all existing custom metadata
 					try
-						-- Switch to current application for string operations
-						tell current application
-							-- Find position of first colon
-							set colonOffset to offset of ":" in theParagraph
-							
-							-- Get the key (text before colon)
-							set theKey to text 1 thru (colonOffset - 1) of theParagraph
-							
-							-- Check if there's any text after the colon
-							if length of theParagraph > colonOffset then
-								set theValue to text (colonOffset + 1) thru -1 of theParagraph
-							else
-								set theValue to ""
-							end if
-						end tell
-						
-						-- Trim whitespace from both key and value
-						set theKey to my trimWhitespace(theKey)
-						set theValue to my trimWhitespace(theValue)
-						
-						if (theKey is "title") then
-							set foundTitle to theValue
-						end if
-						if (theKey is not "Tags") and (theValue is not "") then
-							add custom meta data theValue for theKey to theRecord
-						else if (theKey is "Tags") and (theValue is not "") then
-							-- Handle tags
-							set AppleScript's text item delimiters to ","
-							set rawTags to text items of theValue
-							
-							-- Clean each tag and build list
-							set cleanTags to {}
-							repeat with aTag in rawTags
-								set cleanTag to my trimWhitespace(aTag)
-								if cleanTag is not "" then
-									copy cleanTag to end of cleanTags
-								end if
-							end repeat
-							
-							-- Set the cleaned tags
-							set tags of theRecord to cleanTags
-						end if
-						set AppleScript's text item delimiters to od
+						set custom meta data of theRecord to {}
 					on error errMsg
-						-- Skip this line if there's an error
-						log "Error processing line: " & theParagraph & " - " & errMsg
+						log "Warning: Could not clear metadata for " & originalName & ": " & errMsg
 					end try
+					
+					-- Clear existing tags
+					try
+						set tags of theRecord to {}
+					on error errMsg
+						log "Warning: Could not clear tags for " & originalName & ": " & errMsg
+					end try
+					
+					set src to plain text of theRecord
+					
+					-- Verify we have content to process
+					if src is "" then
+						log "Warning: No content found in file: " & originalName
+						set errorCount to errorCount + 1
+						set processedCount to processedCount + 1
+						log "Skipping empty file " & processedCount & " of " & totalFiles
+					else
+						try
+							set paraCount to count paragraphs of src
+							if paraCount is 0 then
+								log "Warning: No paragraphs found in file: " & originalName
+								set errorCount to errorCount + 1
+								set processedCount to processedCount + 1
+								log "Skipping file with no paragraphs " & processedCount & " of " & totalFiles
+							else
+								set mdMarker to false
+								set od to AppleScript's text item delimiters
+								set i to 1
+								
+								-- Process metadata and tags first
+								repeat until i > paraCount
+									try
+										set theParagraph to paragraph i of src
+									on error errMsg
+										log "Error accessing paragraph " & i & " in file: " & originalName & " - " & errMsg
+										exit repeat
+									end try
+									
+									if theParagraph is missing value then
+										log "Warning: Invalid paragraph " & i & " in file: " & originalName
+										exit repeat
+									end if
+									
+									if (theParagraph is "---") and (not mdMarker) then
+										set mdMarker to true
+									else if (theParagraph is "---") and mdMarker then
+										exit repeat
+									else if mdMarker then
+										if theParagraph contains ":" then
+											try
+												tell current application
+													set colonOffset to offset of ":" in theParagraph
+													set theKey to text 1 thru (colonOffset - 1) of theParagraph
+													if length of theParagraph > colonOffset then
+														set theValue to text (colonOffset + 1) thru -1 of theParagraph
+													else
+														set theValue to ""
+													end if
+												end tell
+												
+												set theKey to my trimWhitespace(theKey)
+												set theValue to my trimWhitespace(theValue)
+												
+												if (theKey is "title") then
+													set foundTitle to theValue
+												end if
+												
+												if (theKey is not "title") and (theKey is not "Tags") and (theValue is not "") then
+													try
+														add custom meta data theValue for theKey to theRecord
+													on error errMsg
+														log "Warning: Could not add metadata " & theKey & " for " & originalName & ": " & errMsg
+													end try
+												else if (theKey is "Tags") and (theValue is not "") then
+													try
+														set AppleScript's text item delimiters to ","
+														set rawTags to text items of theValue
+														set cleanTags to {}
+														repeat with aTag in rawTags
+															set cleanTag to my trimWhitespace(aTag)
+															if cleanTag is not "" then
+																copy cleanTag to end of cleanTags
+															end if
+														end repeat
+														set tags of theRecord to cleanTags
+													on error errMsg
+														log "Warning: Could not process tags for " & originalName & ": " & errMsg
+													end try
+												end if
+												set AppleScript's text item delimiters to od
+											on error errMsg
+												log "Warning: Error processing line: " & theParagraph & " - " & errMsg
+											end try
+										end if
+									end if
+									set i to i + 1
+								end repeat
+								
+								delay 0.5
+								
+								-- Handle filename change last
+								if (foundTitle is not "") then
+									try
+										log "Attempting to rename record: " & originalName & " to: " & foundTitle
+										if originalName is not foundTitle then
+											set name of theRecord to foundTitle
+											delay 0.75
+											
+											if name of theRecord is not foundTitle then
+												log "Warning: Name change verification failed for " & originalName & " - retrying..."
+												delay 1
+												set name of theRecord to foundTitle
+												
+												if name of theRecord is not foundTitle then
+													log "Error: Name change failed after retry for " & originalName
+												else
+													log "Name change succeeded on retry for: " & foundTitle
+												end if
+											else
+												log "Name change verified for: " & foundTitle
+											end if
+										else
+											log "Name already matches title for: " & originalName
+										end if
+									on error errMsg
+										log "Warning: Error renaming record " & originalName & ": " & errMsg
+									end try
+								end if
+								
+								delay 0.5
+								
+								set processedCount to processedCount + 1
+								log "Successfully processed file " & processedCount & " of " & totalFiles
+							end if
+						on error errMsg
+							set errorCount to errorCount + 1
+							log "Error processing file " & originalName & ": " & errMsg
+						end try
+					end if
+					
+					delay 0.2
 				end if
-			end if
-			set i to i + 1
+			on error errMsg
+				set errorCount to errorCount + 1
+				log "Error processing file " & originalName & ": " & errMsg
+			end try
 		end repeat
 		
-		if (foundTitle is not "") then
-			set name of theRecord to foundTitle
-		end if
-	end repeat
+		log "Processing complete. Successfully processed " & processedCount & " files with " & errorCount & " errors."
+	on error errMsg
+		log "Error processing files: " & errMsg
+	end try
 end tell
 
 on trimWhitespace(theText)
-	-- Remove leading/trailing whitespace
 	repeat while theText begins with " " or theText begins with tab
 		if theText begins with " " then
 			set theText to text 2 thru -1 of theText
