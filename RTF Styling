@@ -1,0 +1,99 @@
+use framework "Foundation"
+use scripting additions
+
+property delim : return -- Newline character for splitting
+
+tell application id "DNtp"
+	try
+		-- Ensure a selection is made
+		set theseItems to the selection
+		if theseItems is {} then error "Please select a document."
+		
+		-- Process each selected item
+		repeat with thisItem in theseItems
+			-- Get item name and location
+			set itemName to name of thisItem
+			set itemLocation to location of thisItem
+			set targetGroupName to itemLocation & "/Exploded: " & itemName
+			set targetGroup to create location targetGroupName in current database
+			
+			-- Export to Desktop instead of temp folder
+			set desktopPath to POSIX path of (path to desktop as text)
+			set tempRTFDPath to desktopPath & "temp_exploded.rtfd"
+			
+			-- Export the document as an RTFD file
+			export record thisItem to tempRTFDPath
+			
+			-- Ensure the exported folder exists
+			set fileManager to current application's NSFileManager's defaultManager()
+			if not (fileManager's fileExistsAtPath:tempRTFDPath) then
+				error "RTFD export failed: Folder was not created."
+			end if
+			
+			-- Find the actual `.rtf` file inside the `.rtfd` package
+			set rtfFilePath to tempRTFDPath & "/New Rich Text 1.rtf"
+			if not (fileManager's fileExistsAtPath:rtfFilePath) then
+				error "RTF file missing inside the exported RTFD package."
+			end if
+			
+			-- Load the correct `.rtf` file as `NSData`
+			set fileURL to (current application's NSURL's fileURLWithPath:rtfFilePath)
+			set rtfNSData to (current application's NSData's alloc()'s initWithContentsOfURL:fileURL)
+			
+			-- Convert `NSData` into `NSAttributedString` to keep formatting
+			set attrString to (current application's NSAttributedString's alloc()'s initWithRTF:rtfNSData documentAttributes:(missing value))
+			if attrString is missing value then
+				error "Failed to create NSAttributedString from RTF file."
+			end if
+			
+			-- Extract plain text version to determine paragraph locations
+			set nsPlainText to attrString's |string|()
+			
+			-- Normalize newlines (Convert `\r` and `\r\n` to `\n`)
+			set nsPlainText to (nsPlainText's stringByReplacingOccurrencesOfString:("
+") withString:("
+"))
+			set nsPlainText to (nsPlainText's stringByReplacingOccurrencesOfString:("
+") withString:("
+"))
+			
+			-- Split into paragraphs
+			set parStrings to (nsPlainText's componentsSeparatedByString:("
+"))
+			
+			-- Iterate over paragraphs and extract styled content
+			set startIndex to 0
+			repeat with i from 0 to ((parStrings's |count|()) - 1)
+				set onePara to (parStrings's objectAtIndex:i)
+				if (onePara's |length|() > 0) then
+					-- Locate paragraph range
+					set paraRange to ((attrString's |string|())'s rangeOfString:(onePara))
+					if paraRange is missing value then
+						error "Could not find paragraph range."
+					end if
+					
+					-- Extract attributed substring for paragraph
+					set subAttrStr to (attrString's attributedSubstringFromRange:paraRange)
+					
+					-- Convert attributed substring to RTF (NO EXTERNAL FILES)
+					set subRTFData to (subAttrStr's RTFFromRange:(current application's NSMakeRange(0, subAttrStr's |length|())) documentAttributes:(current application's NSDictionary's dictionary()))
+					
+					-- Convert RTF `NSData` to AppleScript text
+					set newRTFString to (current application's NSString's alloc()'s initWithData:subRTFData encoding:(current application's NSMacOSRomanStringEncoding))
+					
+					-- Create a new DEVONthink record with full formatting
+					set newName to onePara as text
+					set newRecord to create record with {name:newName, rich text:(newRTFString as text), type:rtf} in targetGroup
+					
+					-- Update `startIndex` to prevent overlap
+					set startIndex to startIndex + (onePara's |length|()) + 1
+				end if
+			end repeat
+			
+			--
+			
+		end repeat
+	on error errMsg
+		display dialog "Error: " & errMsg
+	end try
+end tell
