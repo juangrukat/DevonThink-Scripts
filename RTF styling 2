@@ -1,0 +1,129 @@
+use framework "Foundation"
+use scripting additions
+
+tell application id "DNtp"
+	try
+		-- Ensure a selection is made
+		set theseItems to the selection
+		if theseItems is {} then error "Please select a document."
+		
+		-- Get Foundation classes we'll use
+		set NSFileManager to current application's NSFileManager
+		set NSString to current application's NSString
+		set NSAttributedString to current application's NSAttributedString
+		set NSMutableAttributedString to current application's NSMutableAttributedString
+		set NSData to current application's NSData
+		set NSUTF8StringEncoding to current application's NSUTF8StringEncoding
+		set NSMacOSRomanStringEncoding to current application's NSMacOSRomanStringEncoding
+		set NSDocumentTypeDocumentAttribute to current application's NSDocumentTypeDocumentAttribute
+		set NSRTFTextDocumentType to current application's NSRTFTextDocumentType
+		set NSNotFound to current application's NSNotFound
+		
+		-- Process each selected item
+		repeat with thisItem in theseItems
+			set itemName to name of thisItem
+			set itemLocation to location of thisItem
+			set targetGroupName to itemLocation & "/Exploded: " & itemName
+			set targetGroup to create location targetGroupName in current database
+			
+			-- Create a temporary path for RTFD
+			set desktopPath to POSIX path of (path to desktop as text)
+			set tempPath to desktopPath & "temp_exploded.rtfd"
+			
+			-- Export the document as RTFD
+			export record thisItem to tempPath
+			
+			-- Initialize file manager
+			set fm to NSFileManager's defaultManager()
+			
+			-- Verify RTFD package exists and find RTF file
+			if not (fm's fileExistsAtPath:tempPath) then
+				error "Failed to create RTFD package"
+			end if
+			
+			-- Try to find the RTF file
+			set rtfPath to tempPath & "/New Rich Text 1.rtf"
+			if not (fm's fileExistsAtPath:rtfPath) then
+				set rtfPath to tempPath & "/TXT.rtf"
+				if not (fm's fileExistsAtPath:rtfPath) then
+					error "Could not find RTF file in package"
+				end if
+			end if
+			
+			-- Read RTF data
+			set rtfData to NSData's dataWithContentsOfFile:rtfPath
+			if rtfData is missing value then
+				error "Failed to read RTF file data"
+			end if
+			
+			-- Create attributed string from RTF
+			set options to current application's NSDictionary's dictionaryWithObject:NSRTFTextDocumentType forKey:NSDocumentTypeDocumentAttribute
+			set errorRef to missing value
+			set attrString to (NSAttributedString's alloc()'s initWithData:rtfData options:options documentAttributes:(missing value) |error|:(reference to errorRef))
+			
+			if errorRef is not missing value then
+				error "Failed to create attributed string: " & ((errorRef's localizedDescription()) as text)
+			end if
+			
+			-- Get plain text and split into paragraphs
+			set plainText to attrString's |string|() as text
+			
+			-- Split text into paragraphs using AppleScript's text handling
+			set paragraphList to {}
+			set tempText to plainText
+			set oldDelimiters to AppleScript's text item delimiters
+			set AppleScript's text item delimiters to {return, linefeed}
+			set paragraphList to text items of tempText
+			set AppleScript's text item delimiters to oldDelimiters
+			
+			-- Process each paragraph
+			set startLocation to 0
+			repeat with i from 1 to count of paragraphList
+				set paraText to item i of paragraphList
+				if length of paraText > 0 then
+					try
+						-- Find the range of this paragraph in the original attributed string
+						set paraLength to length of paraText
+						set paraRange to current application's NSMakeRange(startLocation, paraLength)
+						
+						-- Extract the styled paragraph
+						set paraAttrStr to (attrString's attributedSubstringFromRange:paraRange)
+						
+						-- Convert to RTF data
+						set docAttrs to current application's NSDictionary's dictionary()
+						set paraRTFData to (paraAttrStr's RTFFromRange:(current application's NSMakeRange(0, paraAttrStr's |length|())) documentAttributes:docAttrs)
+						
+						-- Convert to string
+						set rtfString to (NSString's alloc()'s initWithData:paraRTFData encoding:NSMacOSRomanStringEncoding) as text
+						
+						-- Create record
+						create record with {name:paraText, rich text:rtfString, type:rtf} in targetGroup
+					on error errText
+						log "Failed to process paragraph: " & errText
+					end try
+				end if
+				-- Update start location for next paragraph (add 1 for the line ending)
+				set startLocation to startLocation + (length of paraText) + 1
+			end repeat
+			
+			-- Clean up
+			tell application "Finder"
+				if exists POSIX file tempPath then
+					delete POSIX file tempPath
+				end if
+			end tell
+			
+		end repeat
+		
+	on error errMsg
+		-- Clean up on error
+		try
+			tell application "Finder"
+				if exists POSIX file tempPath then
+					delete POSIX file tempPath
+				end if
+			end tell
+		end try
+		display dialog "Error: " & errMsg
+	end try
+end tell
