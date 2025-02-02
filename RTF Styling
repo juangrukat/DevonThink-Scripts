@@ -30,17 +30,39 @@ tell application id "DNtp"
 				error "RTFD export failed: Folder was not created."
 			end if
 			
-			-- Find the actual `.rtf` file inside the `.rtfd` package
-			set rtfFilePath to tempRTFDPath & "/New Rich Text 1.rtf"
-			if not (fileManager's fileExistsAtPath:rtfFilePath) then
-				error "RTF file missing inside the exported RTFD package."
+			-- Find the RTF file inside the .rtfd package - try both common names
+			set rtfFilePath to tempRTFDPath & "/TXT.rtf"
+			set altRtfFilePath to tempRTFDPath & "/New Rich Text 1.rtf"
+			
+			if (fileManager's fileExistsAtPath:rtfFilePath) then
+				set rtfFilePath to rtfFilePath
+			else if (fileManager's fileExistsAtPath:altRtfFilePath) then
+				set rtfFilePath to altRtfFilePath
+			else
+				-- List contents of RTFD package to find RTF file
+				set rtfdContents to (fileManager's contentsOfDirectoryAtPath:tempRTFDPath |error|:(missing value))
+				set foundRTF to false
+				repeat with fileName in rtfdContents
+					if (fileName as text) ends with ".rtf" then
+						set rtfFilePath to tempRTFDPath & "/" & (fileName as text)
+						set foundRTF to true
+						exit repeat
+					end if
+				end repeat
+				
+				if not foundRTF then
+					error "RTF file missing inside the exported RTFD package. Contents: " & (rtfdContents as text)
+				end if
 			end if
 			
-			-- Load the correct `.rtf` file as `NSData`
+			-- Load the RTF file as NSData
 			set fileURL to (current application's NSURL's fileURLWithPath:rtfFilePath)
 			set rtfNSData to (current application's NSData's alloc()'s initWithContentsOfURL:fileURL)
+			if rtfNSData is missing value then
+				error "Failed to load RTF file data from " & rtfFilePath
+			end if
 			
-			-- Convert `NSData` into `NSAttributedString` to keep formatting
+			-- Convert NSData into NSAttributedString to keep formatting
 			set attrString to (current application's NSAttributedString's alloc()'s initWithRTF:rtfNSData documentAttributes:(missing value))
 			if attrString is missing value then
 				error "Failed to create NSAttributedString from RTF file."
@@ -49,7 +71,7 @@ tell application id "DNtp"
 			-- Extract plain text version to determine paragraph locations
 			set nsPlainText to attrString's |string|()
 			
-			-- Normalize newlines (Convert `\r` and `\r\n` to `\n`)
+			-- Normalize newlines (Convert \r and \r\n to \n)
 			set nsPlainText to (nsPlainText's stringByReplacingOccurrencesOfString:("
 ") withString:("
 "))
@@ -57,7 +79,7 @@ tell application id "DNtp"
 ") withString:("
 "))
 			
-			-- Split into paragraphs
+			-- Split into paragraphs while preserving empty lines
 			set parStrings to (nsPlainText's componentsSeparatedByString:("
 "))
 			
@@ -65,35 +87,52 @@ tell application id "DNtp"
 			set startIndex to 0
 			repeat with i from 0 to ((parStrings's |count|()) - 1)
 				set onePara to (parStrings's objectAtIndex:i)
-				if (onePara's |length|() > 0) then
+				
+				-- Process only non-empty paragraphs
+				set paraLength to (onePara's |length|())
+				if paraLength > 0 then
 					-- Locate paragraph range
 					set paraRange to ((attrString's |string|())'s rangeOfString:(onePara))
+					
 					if paraRange is missing value then
-						error "Could not find paragraph range."
+						error "Could not find paragraph range for text: " & (onePara as text)
 					end if
 					
 					-- Extract attributed substring for paragraph
 					set subAttrStr to (attrString's attributedSubstringFromRange:paraRange)
 					
-					-- Convert attributed substring to RTF (NO EXTERNAL FILES)
+					-- Convert attributed substring to RTF
 					set subRTFData to (subAttrStr's RTFFromRange:(current application's NSMakeRange(0, subAttrStr's |length|())) documentAttributes:(current application's NSDictionary's dictionary()))
 					
-					-- Convert RTF `NSData` to AppleScript text
+					-- Convert RTF NSData to AppleScript text
 					set newRTFString to (current application's NSString's alloc()'s initWithData:subRTFData encoding:(current application's NSMacOSRomanStringEncoding))
 					
 					-- Create a new DEVONthink record with full formatting
-					set newName to onePara as text
-					set newRecord to create record with {name:newName, rich text:(newRTFString as text), type:rtf} in targetGroup
+					set newRecord to create record with {name:(onePara as text), rich text:(newRTFString as text), type:rtf} in targetGroup
 					
-					-- Update `startIndex` to prevent overlap
-					set startIndex to startIndex + (onePara's |length|()) + 1
+					-- Update startIndex to prevent overlap
+					set startIndex to startIndex + paraLength + 1
+				else
+					-- Just update startIndex for empty lines
+					set startIndex to startIndex + 1
 				end if
 			end repeat
 			
-			--
+			-- Clean up: Delete the temporary RTFD package using AppleScript
+			tell application "Finder"
+				if exists POSIX file tempRTFDPath then
+					delete POSIX file tempRTFDPath
+				end if
+			end tell
 			
 		end repeat
 	on error errMsg
+		-- Clean up on error using AppleScript
+		tell application "Finder"
+			if exists POSIX file tempRTFDPath then
+				delete POSIX file tempRTFDPath
+			end if
+		end tell
 		display dialog "Error: " & errMsg
 	end try
 end tell
