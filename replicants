@@ -1,0 +1,6 @@
+tell application id "DNtp"
+	set replGroup to create location ((location of current group) & "Replicants") in current database
+	repeat with r in (selected records)
+		replicate record r to replGroup
+	end repeat
+end tell
