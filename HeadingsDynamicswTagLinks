@@ -109,18 +109,18 @@ tell application id "DNtp"
 					
 					-- Add tags with links if they exist
 					if (count of docTags) > 0 then
-					    set docLink to docLink & " "
-					    repeat with aTag in docTags
-					        try
-					            -- Create a proper item link for the tag without quotes
-					            set encodedTag to my encodeText(aTag)
-					            set tagURL to "x-devonthink://search?query=tag:" & encodedTag
-					            set docLink to docLink & "[" & aTag & "](" & tagURL & ") "
-					        on error
-					            -- If there's any error, just add the tag without a link
-					            set docLink to docLink & "[" & aTag & "] "
-					        end try
-					    end repeat
+						set docLink to docLink & return & "  Tags: "
+						repeat with aTag in docTags
+							try
+								-- Create a proper item link for the tag without quotes
+								set encodedTag to my encodeText(aTag)
+								set tagURL to "x-devonthink://search?query=tag:" & encodedTag
+								set docLink to docLink & "[" & aTag & "](" & tagURL & ") "
+							on error
+								-- If there's any error, just add the tag without a link
+								set docLink to docLink & "[" & aTag & "] "
+							end try
+						end repeat
 					end if
 					
 					set pageContent to plain text of wikiPage
@@ -129,7 +129,7 @@ tell application id "DNtp"
 							set pageContent to pageContent & return
 						end if
 						-- Make sure we're adding the link properly
-						set plain text of wikiPage to pageContent & docLink & return
+						set plain text of wikiPage to pageContent & docLink & return & return
 						
 						-- Verify the link was added by checking the content again
 						set updatedContent to plain text of wikiPage
