@@ -95,9 +95,15 @@ tell application id "DNtp"
 				
 				-- Process found wikilinks
 				repeat with linkText in wikilinks
-					-- Create or get wikilink page
-					set wikiPage to get record at ("/Heading Pages/" & linkText) in theDB
-					if wikiPage is missing value then
+					-- First try to find existing heading page by searching
+					set existingPages to search "name:" & quoted form of linkText in headingsGroup
+					set wikiPage to missing value
+					
+					-- Check if we found an existing page
+					if (count of existingPages) > 0 then
+						set wikiPage to item 1 of existingPages
+					else
+						-- Create new page if none exists
 						set wikiPage to create record with {name:linkText, type:markdown} in headingsGroup
 						set plain text of wikiPage to "# " & linkText & return & return & "## Documents referencing this heading" & return
 					end if
@@ -164,7 +170,8 @@ tell application id "DNtp"
 					set headingName to name of headingPage
 					
 					-- If page contains a reference to this document
-					if pageContent contains docLink then
+					set docLinkFirstLine to "- [" & (name of theRecord as string) & "](" & docURL & ")"
+					if pageContent contains docLinkFirstLine then
 						-- Check if the document still contains this wikilink
 						set hasWikilink to false
 						set linkToFind to "[[" & headingName & "]]"
@@ -179,10 +186,31 @@ tell application id "DNtp"
 							set AppleScript's text item delimiters to return
 							set contentLines to text items of pageContent
 							
-							-- Remove the line containing the link
+							-- Remove the line containing the link and the following Tags line if it exists
 							set newContent to {}
-							repeat with aLine in contentLines
-								if aLine does not contain docLink then
+							set skipNextLine to false
+							repeat with i from 1 to count of contentLines
+								set aLine to item i of contentLines
+								
+								if skipNextLine then
+									-- Skip this line (the Tags line)
+									set skipNextLine to false
+								else if aLine contains docLinkFirstLine then
+									-- Found the document link line, skip it and potentially the next line
+									set skipNextLine to true
+									
+									-- Check if the next line is a Tags line
+									if i < (count of contentLines) then
+										set nextLine to item (i + 1) of contentLines
+										if nextLine contains "Tags: " then
+											-- Already set to skip the next line
+										else
+											-- Not a Tags line, don't skip
+											set skipNextLine to false
+										end if
+									end if
+								else
+									-- Keep this line
 									set end of newContent to aLine
 								end if
 							end repeat
