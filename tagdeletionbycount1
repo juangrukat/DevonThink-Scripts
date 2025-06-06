@@ -1,0 +1,82 @@
+-- EFFICIENT DELETION SCRIPT for Single-Item Tags
+-- This version uses batch processing to delete all targeted tags in a single command,
+-- which is significantly faster.
+
+-- Define lists to hold the results.
+set tagsToDelete to {}
+set tagNamesToDelete to {}
+
+try
+	-- === PASS 1: FINDING (No changes here) ===
+	-- This block finds all the tags that meet our criteria.
+	tell application id "DNtp"
+		set theDatabase to current database
+		if not (exists theDatabase) then error "No database is open."
+		
+		set theTagsGroup to get record at "/Tags" in theDatabase
+		set allTagRecords to children of theTagsGroup
+		set totalTagCount to count of allTagRecords
+		
+		if totalTagCount is 0 then
+			error "No tags found in the database to check."
+		end if
+		
+		show progress indicator "Finding tags with 1 item..." steps totalTagCount
+		
+		repeat with aTagRecord in allTagRecords
+			set theTagName to name of aTagRecord
+			step progress indicator "Checking: " & theTagName
+			
+			set foundRecords to lookup records with tags {theTagName} in theDatabase
+			
+			if (count of foundRecords) is 1 then
+				set end of tagsToDelete to aTagRecord
+				set end of tagNamesToDelete to theTagName
+			end if
+		end repeat
+		
+		hide progress indicator
+	end tell
+	
+	set deletionCount to count of tagsToDelete
+	if deletionCount is 0 then
+		display dialog "Process complete. No tags were found with exactly 1 item."
+		return
+	end if
+	
+	
+	-- === CONFIRMATION DIALOG (No changes here) ===
+	set AppleScript's text item delimiters to ", "
+	set tagListForDisplay to tagNamesToDelete as text
+	set AppleScript's text item delimiters to ""
+	
+	display dialog "Found " & deletionCount & " tags with exactly 1 item each." & return & return & "Are you sure you want to permanently delete these " & deletionCount & " tags in a single batch?" & return & return & "Example Tags: " & tagListForDisplay buttons {"Cancel", "Delete All"} default button "Cancel" cancel button "Cancel"
+	
+	
+	-- === PASS 2: EFFICIENT DELETING (This is the new part) ===
+	-- We send a single 'delete' command with the entire list of tags.
+	tell application id "DNtp"
+		-- The progress indicator is "indeterminate" because we can't step through a single command.
+		show progress indicator "Deleting " & deletionCount & " tags in a single batch..." steps -1
+		
+		-- *** THE KEY EFFICIENCY IMPROVEMENT IS HERE ***
+		-- Delete the entire list of records at once.
+		delete record tagsToDelete
+		
+		hide progress indicator
+	end tell
+
+	-- === FINAL REPORT ===
+	set AppleScript's text item delimiters to return
+	set finalReportText to tagNamesToDelete as text
+	set AppleScript's text item delimiters to ""
+	
+	display dialog "Deletion Complete!" & return & return & "Successfully deleted " & deletionCount & " tags:" & return & return & finalReportText
+
+on error errMsg number errNum
+	-- Make sure the progress indicator is hidden even if an error occurs.
+	try
+		tell application id "DNtp" to hide progress indicator
+	end try
+	display alert "An error occurred:" & return & "Error " & errNum & ": " & errMsg
+end try
