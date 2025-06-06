@@ -1,0 +1,112 @@
+-- FLEXIBLE & EFFICIENT DELETION SCRIPT
+-- This script prompts the user for a target count (e.g., 1, 2, 3, etc.)
+-- and then uses fast batch-processing to find and delete all tags matching that count.
+
+-- Define lists to hold the results.
+set tagsToDelete to {}
+set tagNamesToDelete to {}
+set targetCount to 0
+
+try
+	-- === STEP 1: GET USER INPUT ===
+	-- This loop will continue to ask the user for input until they provide a
+	-- valid number (greater than 0) or click "Cancel".
+	repeat until targetCount > 0
+		try
+			set dialogResult to display dialog "Enter the exact number of items a tag must have to be deleted:" default answer "1" buttons {"Cancel", "Continue"} default button "Continue"
+			set userInputText to text returned of dialogResult
+			set targetCount to userInputText as integer
+			
+			-- Ensure the number is positive.
+			if targetCount < 1 then
+				display alert "Invalid Number" message "Please enter a whole number greater than 0."
+				set targetCount to 0 -- Reset to keep the loop going
+			end if
+			
+		on error number errNum
+			-- If the user clicks "Cancel" (error -128), we exit the script gracefully.
+			if errNum is -128 then
+				error "User cancelled the operation." number -128
+			else
+				-- This handles cases where the user enters text instead of a number.
+				display alert "Invalid Input" message "Please enter a valid whole number (e.g., 1, 2, 3)."
+			end if
+		end try
+	end repeat
+	
+	-- A small helper for making dialog text grammatically correct (item vs items).
+	set pluralSuffix to "s"
+	if targetCount is 1 then set pluralSuffix to ""
+	
+	-- === STEP 2: FINDING ===
+	-- This block communicates with DEVONthink to find all the tags that match the user's criteria.
+	tell application id "DNtp"
+		set theDatabase to current database
+		if not (exists theDatabase) then error "No database is open."
+		
+		set theTagsGroup to get record at "/Tags" in theDatabase
+		set allTagRecords to children of theTagsGroup
+		set totalTagCount to count of allTagRecords
+		
+		if totalTagCount is 0 then
+			error "No tags found in the database to check."
+		end if
+		
+		show progress indicator "Finding tags with " & targetCount & " item" & pluralSuffix & "..." steps totalTagCount
+		
+		repeat with aTagRecord in allTagRecords
+			set theTagName to name of aTagRecord
+			step progress indicator "Checking: " & theTagName
+			
+			set foundRecords to lookup records with tags {theTagName} in theDatabase
+			
+			-- The condition now uses the user-provided 'targetCount' variable.
+			if (count of foundRecords) is targetCount then
+				set end of tagsToDelete to aTagRecord
+				set end of tagNamesToDelete to theTagName
+			end if
+		end repeat
+		
+		hide progress indicator
+	end tell
+	
+	set deletionCount to count of tagsToDelete
+	if deletionCount is 0 then
+		display dialog "Process complete. No tags were found with exactly " & targetCount & " item" & pluralSuffix & "."
+		return
+	end if
+	
+	-- === STEP 3: CONFIRMATION DIALOG ===
+	set AppleScript's text item delimiters to ", "
+	set tagListForDisplay to tagNamesToDelete as text
+	set AppleScript's text item delimiters to ""
+	
+	display dialog "Found " & deletionCount & " tags with exactly " & targetCount & " item" & pluralSuffix & " each." & return & return & "Are you sure you want to permanently delete these " & deletionCount & " tags in a single batch?" & return & return & "Example Tags: " & tagListForDisplay buttons {"Cancel", "Delete All"} default button "Cancel" cancel button "Cancel"
+	
+	-- === STEP 4: EFFICIENT DELETING ===
+	tell application id "DNtp"
+		show progress indicator "Deleting " & deletionCount & " tags in a single batch..." steps -1
+		delete record tagsToDelete
+		hide progress indicator
+	end tell
+
+	-- === STEP 5: FINAL REPORT ===
+	set AppleScript's text item delimiters to return
+	set finalReportText to tagNamesToDelete as text
+	set AppleScript's text item delimiters to ""
+	
+	display dialog "Deletion Complete!" & return & return & "Successfully deleted " & deletionCount & " tags that had " & targetCount & " item" & pluralSuffix & ":" & return & return & finalReportText
+
+on error errMsg number errNum
+	-- A custom message for user cancellation.
+	if errNum is -128 then
+		display notification "Tag deletion was cancelled." with title "DEVONthink Script"
+		return
+	end if
+	
+	-- General error handling.
+	try
+		tell application id "DNtp" to hide progress indicator
+	end try
+	display alert "An error occurred:" & return & "Error " & errNum & ": " & errMsg
+end try
