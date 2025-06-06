@@ -1,45 +1,33 @@
--- FLEXIBLE & EFFICIENT DELETION SCRIPT
--- This script prompts the user for a target count (e.g., 1, 2, 3, etc.)
--- and then uses fast batch-processing to find and delete all tags matching that count.
+-- THE RELIABLE & EFFICIENT TAG DELETION SCRIPT (User-Specified Count)
+-- This version uses the most robust method for finding tags by letting DEVONthink's
+-- own database engine do the counting, and then uses fast batch-deletion.
 
--- Define lists to hold the results.
+-- Define variables
 set tagsToDelete to {}
 set tagNamesToDelete to {}
 set targetCount to 0
 
 try
 	-- === STEP 1: GET USER INPUT ===
-	-- This loop will continue to ask the user for input until they provide a
-	-- valid number (greater than 0) or click "Cancel".
 	repeat until targetCount > 0
 		try
 			set dialogResult to display dialog "Enter the exact number of items a tag must have to be deleted:" default answer "1" buttons {"Cancel", "Continue"} default button "Continue"
 			set userInputText to text returned of dialogResult
 			set targetCount to userInputText as integer
-			
-			-- Ensure the number is positive.
 			if targetCount < 1 then
 				display alert "Invalid Number" message "Please enter a whole number greater than 0."
-				set targetCount to 0 -- Reset to keep the loop going
+				set targetCount to 0
 			end if
-			
 		on error number errNum
-			-- If the user clicks "Cancel" (error -128), we exit the script gracefully.
-			if errNum is -128 then
-				error "User cancelled the operation." number -128
-			else
-				-- This handles cases where the user enters text instead of a number.
-				display alert "Invalid Input" message "Please enter a valid whole number (e.g., 1, 2, 3)."
-			end if
+			if errNum is -128 then error "User cancelled the operation." number -128
+			display alert "Invalid Input" message "Please enter a valid whole number (e.g., 1, 2, 3)."
 		end try
 	end repeat
 	
-	-- A small helper for making dialog text grammatically correct (item vs items).
 	set pluralSuffix to "s"
 	if targetCount is 1 then set pluralSuffix to ""
 	
-	-- === STEP 2: FINDING ===
-	-- This block communicates with DEVONthink to find all the tags that match the user's criteria.
+	-- === STEP 2: FINDING (The Robust Method) ===
 	tell application id "DNtp"
 		set theDatabase to current database
 		if not (exists theDatabase) then error "No database is open."
@@ -54,13 +42,14 @@ try
 		
 		show progress indicator "Finding tags with " & targetCount & " item" & pluralSuffix & "..." steps totalTagCount
 		
+		-- This loop is reliable. For each tag, we ask DEVONthink for its usage count.
 		repeat with aTagRecord in allTagRecords
 			set theTagName to name of aTagRecord
 			step progress indicator "Checking: " & theTagName
 			
 			set foundRecords to lookup records with tags {theTagName} in theDatabase
 			
-			-- The condition now uses the user-provided 'targetCount' variable.
+			-- The condition uses the user-provided 'targetCount' variable.
 			if (count of foundRecords) is targetCount then
 				set end of tagsToDelete to aTagRecord
 				set end of tagNamesToDelete to theTagName
@@ -89,22 +78,16 @@ try
 		delete record tagsToDelete
 		hide progress indicator
 	end tell
-
+	
 	-- === STEP 5: FINAL REPORT ===
 	set AppleScript's text item delimiters to return
 	set finalReportText to tagNamesToDelete as text
 	set AppleScript's text item delimiters to ""
 	
 	display dialog "Deletion Complete!" & return & return & "Successfully deleted " & deletionCount & " tags that had " & targetCount & " item" & pluralSuffix & ":" & return & return & finalReportText
-
-on error errMsg number errNum
-	-- A custom message for user cancellation.
-	if errNum is -128 then
-		display notification "Tag deletion was cancelled." with title "DEVONthink Script"
-		return
-	end if
 	
-	-- General error handling.
+on error errMsg number errNum
+	if errNum is -128 then return
 	try
 		tell application id "DNtp" to hide progress indicator
 	end try
