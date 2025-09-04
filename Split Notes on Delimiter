@@ -1,0 +1,279 @@
+
+```markdown
+# DEVONthink Split Notes on Delimiter
+
+AppleScript for [DEVONthink 3](https://www.devontechnologies.com/apps/devonthink) that **splits a text or Markdown record into multiple notes** whenever it encounters the delimiter:
+
+```
+
+۞
+
+```
+
+Each new note is named from the `Subtitle:` line, its `Number:` value is written into the custom metadata field **Number**, and the note body preserves the full header (`Title/Subtitle/Number`) along with the section’s content.
+
+---
+
+## ✨ Features
+
+- Works on **plain text**, **Markdown**, and **RTF** records.
+- Splits on the delimiter character `۞` (must be on its own line).
+- Extracts:
+  - `Title:`  
+  - `Subtitle:` → used as the new note’s **name**  
+  - `Number:` → stored in DEVONthink’s custom metadata field **Number**
+- Preserves `Title/Subtitle/Number` lines in the body of each new note.
+- Creates the new notes in the **same group** as the original by default.
+- Uses DEVONthink’s **progress indicator** with cancel button.
+- Error handling to prevent crashes if the record is empty or unsupported.
+
+---
+
+## 📄 Example
+
+Given this source note:
+
+```
+
+Title: Defining the Nature of Thought
+Subtitle: The Progressive Restriction of the Term "Thought"
+Number: 1
+
+\[... body text ...]
+
+۞
+
+Title: Casual Mental Activity
+Subtitle: Idle Fancy and Non-Reflective Thought
+Number: 2
+
+\[... body text ...]
+
+```
+
+The script will create **two new notes**:
+
+1. Named **“The Progressive Restriction of the Term "Thought"”**, with metadata `Number = 1`
+2. Named **“Idle Fancy and Non-Reflective Thought”**, with metadata `Number = 2`
+
+Both notes will include their `Title/Subtitle/Number` lines in the body.
+
+---
+
+## ⚙️ Configuration
+
+- **Delimiter:** currently set to `۞`. Change `property pDelimiter` at the top of the script if needed.
+- **Metadata field:** set by `property pMetaKeyNumber : "Number"`. Change the name if your custom field differs.
+- **Destination:** defaults to the record’s current group. You can toggle `pMakeNotesInSourceGroup` if you want them elsewhere.
+- **Output type:** tries to match the source (Markdown → Markdown, RTF → RTF, TXT → TXT).
+
+---
+
+## 📌 Notes
+
+- If your custom metadata field `Number` does not exist yet, DEVONthink will create it automatically the first time the script runs.
+- You can further customize output (e.g., put notes into a sub-group, or change the naming scheme to include both Title and Subtitle).
+- Safe to use with multiple selections; each record is processed in turn.
+
+---
+(*
+Script: Split DEVONthink note on "۞" into multiple notes
+Purpose: For each section between delimiters, create a new note named by its "Subtitle:",
+         set custom metadata "Number", and preserve Title/Subtitle/Number in the note body.
+Author: AppleScript (GPT-5 Thinking)
+Version: 1.1
+Date: 2025-09-04
+*)
+
+use AppleScript version "2.5"
+use scripting additions
+
+property pDelimiter : "۞"
+property pMetaKeyNumber : "Number"
+property pDefaultNewType : "txt"
+property pMakeNotesInSourceGroup : true
+property pDebugLog : false
+
+on run
+	my splitSelectedRecords()
+end run
+
+on splitSelectedRecords()
+	tell application id "DNtp"
+		try
+			set theSel to the selection
+			if theSel is {} then error "Please select one or more text/Markdown records in DEVONthink."
+			
+			show progress indicator "Splitting notes…" steps (count of theSel) with cancel button
+			
+			repeat with theRec in theSel
+				step progress indicator (name of theRec as text)
+				if cancelled progress then exit repeat
+				
+				set {srcText, srcType} to my getTextAndType(theRec)
+				if srcText is missing value or srcText is "" then error "This record doesn't contain readable text."
+				set destGroup to (location group of theRec)
+				if pMakeNotesInSourceGroup is false then set destGroup to (current group)
+				
+				set sections to my splitOnDelimiter(srcText, pDelimiter)
+				
+				repeat with secText in sections
+					set parsed to my parseSection(secText as text)
+					if parsed is not missing value then
+						set {theTitle, theSubtitle, theNumber, theBody} to parsed
+						
+						set newType to my decideOutputType(srcType)
+						set newRec to my createNote(destGroup, newType, theSubtitle, theBody)
+						
+						if theNumber is not missing value then add custom meta data theNumber for pMetaKeyNumber to newRec
+					end if
+				end repeat
+			end repeat
+			
+			hide progress indicator
+		on error errMsg number errNum
+			hide progress indicator
+			if errNum is not -128 then display alert "Split on delimiter" message errMsg as warning
+		end try
+	end tell
+end splitSelectedRecords
+
+-- === HELPERS ===
+
+on getTextAndType(theRec)
+	tell application id "DNtp"
+		set recType to (type of theRec)
+		try
+			return {plain text of theRec, recType}
+		on error
+			try
+				return {rich text of theRec as text, recType}
+			on error
+				try
+					return {source of theRec, recType}
+				on error
+					return {missing value, recType}
+				end try
+			end try
+		end try
+	end tell
+end getTextAndType
+
+on decideOutputType(srcType)
+	tell application id "DNtp"
+		if srcType is markdown then return markdown
+		if srcType is rtf or srcType is rtfd then return rtf
+		if srcType is txt then return txt
+	end tell
+	return pDefaultNewType
+end decideOutputType
+
+on splitOnDelimiter(s, delimChar)
+	set _s to s as text
+	set {od, AppleScript's text item delimiters} to {AppleScript's text item delimiters, delimChar}
+	set rawItems to text items of _s
+	set AppleScript's text item delimiters to od
+	
+	set out to {}
+	repeat with itx in rawItems
+		set chunk to my trimWhitespace(itx as text)
+		if chunk is not "" then set end of out to chunk
+	end repeat
+	return out
+end splitOnDelimiter
+
+-- ⬇️ KEY CHANGE: keep Title/Subtitle/Number in theBody
+on parseSection(secText)
+	set L to paragraphs of secText
+	set titleVal to missing value
+	set subtitleVal to missing value
+	set numberVal to missing value
+	
+	-- scan for keys but do NOT cut off headers
+	repeat with ln in L
+		set t to my trimWhitespace(ln as text)
+		if t is not "" then
+			if my startsWithKey(t, "title") then
+				set titleVal to my valueAfterColon(t)
+			else if my startsWithKey(t, "subtitle") then
+				set subtitleVal to my valueAfterColon(t)
+			else if my startsWithKey(t, "number") then
+				set v to my valueAfterColon(t)
+				set numberVal to my asIntegerIfPossible(v)
+			end if
+		end if
+	end repeat
+	
+	-- now include the WHOLE secText (with header) as body
+	set bodyText to secText
+	
+	if subtitleVal is missing value then set subtitleVal to my fallbackName(titleVal, bodyText)
+	if (subtitleVal is missing value) and (bodyText is "") then return missing value
+	
+	return {titleVal, subtitleVal, numberVal, bodyText}
+end parseSection
+
+on startsWithKey(ln, key)
+	ignoring case
+		return ln begins with (key & ":")
+	end ignoring
+end startsWithKey
+
+on valueAfterColon(ln)
+	set pos to offset of ":" in ln
+	if pos > 0 then
+		return my trimWhitespace(text (pos + 1) thru -1 of ln)
+	else
+		return ""
+	end if
+end valueAfterColon
+
+on asIntegerIfPossible(v)
+	try
+		return (v as integer)
+	on error
+		try
+			return (v as number)
+		on error
+			return v as text
+		end try
+	end try
+end asIntegerIfPossible
+
+on trimWhitespace(s)
+	set t to s as text
+	repeat while t begins with space or t begins with tab or t begins with return or t begins with linefeed
+		if (length of t) ≤ 1 then exit repeat
+		set t to text 2 thru -1 of t
+	end repeat
+	repeat while t ends with space or t ends with tab or t ends with return or t ends with linefeed
+		if (length of t) ≤ 1 then exit repeat
+		set t to text 1 thru -2 of t
+	end repeat
+	return t
+end trimWhitespace
+
+on fallbackName(titleVal, bodyText)
+	if titleVal is not missing value and titleVal is not "" then return titleVal
+	set paras to paragraphs of bodyText
+	repeat with p in paras
+		set t to my trimWhitespace(p as text)
+		if t is not "" then
+			if (length of t) > 80 then return text 1 thru 80 of t
+			return t
+		end if
+	end repeat
+	return "Untitled Section"
+end fallbackName
+
+on createNote(destGroup, outType, noteName, noteBody)
+	tell application id "DNtp"
+		if outType is markdown then
+			return (create record with {type:markdown, name:noteName, content:noteBody} in destGroup)
+		else if outType is rtf then
+			return (create record with {type:rtf, name:noteName, rich text:noteBody} in destGroup)
+		else
+			return (create record with {type:txt, name:noteName, plain text:noteBody} in destGroup)
+		end if
+	end tell
+end createNote
