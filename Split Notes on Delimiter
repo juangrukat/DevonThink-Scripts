@@ -1,5 +1,4 @@
 
-```markdown
 # DEVONthink Split Notes on Delimiter
 
 AppleScript for [DEVONthink 3](https://www.devontechnologies.com/apps/devonthink) that **splits a text or Markdown record into multiple notes** whenever it encounters the delimiter:
