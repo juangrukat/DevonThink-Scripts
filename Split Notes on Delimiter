@@ -75,7 +75,7 @@ Both notes will include their `Title/Subtitle/Number` lines in the body.
 - You can further customize output (e.g., put notes into a sub-group, or change the naming scheme to include both Title and Subtitle).
 - Safe to use with multiple selections; each record is processed in turn.
 
----
+---SCRIPT---
 (*
 Script: Split DEVONthink note on "۞" into multiple notes
 Purpose: For each section between delimiters, create a new note named by its "Subtitle:",
